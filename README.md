@@ -50,7 +50,7 @@ Office 文件需要 LibreOffice：
 需要 macOS 14+、Swift 6 工具链（Xcode 或 Command Line Tools 均可）。
 
 ~~~sh
-./BatchPrint/scripts/build.sh "$PWD/dist"
+./scripts/build.sh "$PWD/dist"
 ~~~
 
 脚本会分别构建 arm64 和 x86_64，再合并为通用 .app 并进行本地签名。构建不下载 Swift 包依赖。LibreOffice 不会被打进应用。
@@ -58,21 +58,21 @@ Office 文件需要 LibreOffice：
 运行本地功能自测：
 
 ~~~sh
-./BatchPrint/scripts/test.sh
+./scripts/test.sh
 ~~~
 
 具备完整 XCTest 环境时，可运行：
 
 ~~~sh
-swift test --package-path BatchPrint
+swift test
 ~~~
 
 完整构建、验收和依赖说明见：
 
-- 构建说明：BatchPrint/docs/构建说明.md
-- 使用手册：BatchPrint/docs/使用手册.md
-- 验收报告：BatchPrint/docs/验收报告.md
-- 第三方组件：BatchPrint/docs/第三方组件.md
+- 构建说明：docs/构建说明.md
+- 使用手册：docs/使用手册.md
+- 验收报告：docs/验收报告.md
+- 第三方组件：docs/第三方组件.md
 - 更新记录：CHANGELOG.md
 
 ## 技术路线
@@ -107,4 +107,4 @@ PDF 文件或 CUPS 打印队列
 
 ## 许可证
 
-本项目代码使用 MIT License。第三方组件的许可证请查看 BatchPrint/docs/第三方组件.md。
+本项目代码使用 MIT License。第三方组件的许可证请查看 docs/第三方组件.md。
