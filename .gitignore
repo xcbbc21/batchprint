@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+*.swp
+
+# Swift Package Manager and local build output
+.build/
+.build-*/
+.cache/
+.swiftpm/
+dist/
+DerivedData/
+
+# Local validation and delivery artifacts
+work/
+outputs/
+*.log
+
+# User-specific app data
+*.sqlite
+*.sqlite-*
