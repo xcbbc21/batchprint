@@ -20,7 +20,7 @@ struct PrinterBackend: PrinterService {
   return (0..<Int(count)).compactMap { i in
    guard let d = dests?[i], let name = d.name, d.instance == nil else { return nil }
    let label = cupsGetOption("printer-info", d.num_options, d.options).map { String(cString:$0) } ?? String(cString:name)
-   return PrinterInfo(id:String(cString:name), displayName:label)
+   return PrinterInfo(id:String(cString:name), displayName:label, isDefault:d.is_default != 0)
   }
  }
  func capabilities(printer: String) throws -> PrinterCapabilities {

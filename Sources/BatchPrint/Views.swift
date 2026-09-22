@@ -191,7 +191,7 @@ struct PreferencesView:View {
   VStack(alignment:.leading,spacing:16) {
    Text("设置与依赖").font(.title2.bold())
    Form {
-    Section("新批次默认设置") { OutputSettingsView(settings:$model.snapshot.preferences.defaultSettings,printers:model.printers,capabilities:model.capabilities) }
+    Section("新批次默认设置") { OutputSettingsView(settings:defaultSettingsBinding,printers:model.printers,capabilities:model.capabilities) }
     Section("办公文件转换 · LibreOffice") {
      HStack { Image(systemName:available ? "checkmark.circle.fill" : "exclamationmark.triangle.fill").foregroundStyle(available ? .green : .orange); Text(available ? "已找到 LibreOffice" : "未安装；PDF、图片和文本仍可使用") }
      TextField("转换程序路径",text:$model.snapshot.preferences.libreOfficePath)
@@ -207,7 +207,13 @@ struct PreferencesView:View {
     }
    }.formStyle(.grouped)
    HStack { Text("本地处理 · 不上传文件").font(.caption).foregroundStyle(.secondary); Spacer(); Button("完成") { model.persist(); dismiss() }.keyboardShortcut(.defaultAction) }
-  }.padding(20).frame(width:620,height:760)
+ }.padding(20).frame(width:620,height:760)
+ }
+ private var defaultSettingsBinding: Binding<OutputSettings> {
+  Binding(get: { model.snapshot.preferences.defaultSettings }, set: { value in
+   model.snapshot.preferences.defaultSettings = value
+   model.snapshot.preferences.defaultTargetConfigured = true
+  })
  }
  var available:Bool { FileManager.default.isExecutableFile(atPath:model.snapshot.preferences.libreOfficePath) }
 }

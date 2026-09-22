@@ -16,4 +16,16 @@ final class CoreTests: XCTestCase {
   XCTAssertEqual(RecoveryPolicy.recoveredState(.submitting, hasSystemID: false), .needsReview)
   XCTAssertEqual(RecoveryPolicy.recoveredState(.processing, hasSystemID: true), .queued)
  }
+ func testNewDefaultsFollowSystemDefaultPrinter() {
+  let printers = [
+   PrinterInfo(id: "office", displayName: "办公室", isDefault: false),
+   PrinterInfo(id: "toshiba", displayName: "TOSHIBA", isDefault: true)
+  ]
+  XCTAssertEqual(DefaultTargetResolver.resolve(printers: printers, configured: false), .printer("toshiba"))
+  XCTAssertEqual(DefaultTargetResolver.resolve(printers: printers, current: .printer("old-default"), configured: false), .printer("toshiba"))
+  XCTAssertEqual(DefaultTargetResolver.resolve(printers: printers, current: .printer("chosen"), configured: true), .printer("chosen"))
+ }
+ func testNewDefaultsUsePDFWhenNoPrinterExists() {
+  XCTAssertEqual(DefaultTargetResolver.resolve(printers: [], configured: false), .pdf)
+ }
 }

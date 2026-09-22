@@ -31,6 +31,10 @@ import CSQLite
   var invalidRejected = false; do { _ = try PageSelection.parse("0-3",count:3) } catch { invalidRejected = true }; try check(invalidRejected,"拒绝页码 0")
   var settings = OutputSettings(); settings.copies = 7
   try check(settings.target == .pdf && settings.effectiveCopies == 1,"无打印机默认 PDF，忽略实体份数")
+  let printerDefaults = [PrinterInfo(id:"office",displayName:"办公室"), PrinterInfo(id:"toshiba",displayName:"TOSHIBA",isDefault:true)]
+  try check(DefaultTargetResolver.resolve(printers:printerDefaults,configured:false) == .printer("toshiba"),"新批次跟随系统默认打印机")
+  try check(DefaultTargetResolver.resolve(printers:printerDefaults,current:.printer("old-default"),configured:false) == .printer("toshiba"),"刷新后同步新的系统默认打印机")
+  try check(DefaultTargetResolver.resolve(printers:printerDefaults,configured:true) == .pdf,"用户已配置默认目标后不静默替换")
   settings.pageRange = "3,1"; settings.landscape = true; settings.rotation = 90
   let composed = directory.appendingPathComponent("排版.pdf")
   let pages = try PDFComposer.compose(source:source,destination:composed,settings:settings)

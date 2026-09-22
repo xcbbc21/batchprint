@@ -59,14 +59,35 @@ struct Batch: Codable, Identifiable {
 }
 struct PrintTemplate: Codable, Identifiable { var id = UUID(); var name: String; var settings: OutputSettings }
 struct AppPreferences: Codable {
- var defaultSettings = OutputSettings(); var libreOfficePath = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+ var defaultSettings = OutputSettings(); var defaultTargetConfigured = false
+ var libreOfficePath = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
  var conversionTimeout: Double = 180; var lastExportDirectory = ""
  var cacheDays = 30; var historyDays = 180
+ private enum CodingKeys: String, CodingKey { case defaultSettings, defaultTargetConfigured, libreOfficePath, conversionTimeout, lastExportDirectory, cacheDays, historyDays }
+ init() {}
+ init(from decoder: Decoder) throws {
+  let c = try decoder.container(keyedBy: CodingKeys.self)
+  defaultSettings = try c.decodeIfPresent(OutputSettings.self,forKey:.defaultSettings) ?? OutputSettings()
+  // Older snapshots did not record whether the user chose the default target.
+  // A legacy PDF value is therefore migrated to the current system printer.
+  defaultTargetConfigured = try c.decodeIfPresent(Bool.self,forKey:.defaultTargetConfigured) ?? !defaultSettings.target.isPDF
+  libreOfficePath = try c.decodeIfPresent(String.self,forKey:.libreOfficePath) ?? "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+  conversionTimeout = try c.decodeIfPresent(Double.self,forKey:.conversionTimeout) ?? 180
+  lastExportDirectory = try c.decodeIfPresent(String.self,forKey:.lastExportDirectory) ?? ""
+  cacheDays = try c.decodeIfPresent(Int.self,forKey:.cacheDays) ?? 30
+  historyDays = try c.decodeIfPresent(Int.self,forKey:.historyDays) ?? 180
+ }
 }
 struct AppSnapshot: Codable { var batches: [Batch] = []; var templates: [PrintTemplate] = []; var preferences = AppPreferences() }
 struct PrintFailure: LocalizedError { let message: String; var errorDescription: String? { message }; init(_ message: String) { self.message = message } }
 struct ConversionResult { var url: URL; var pageCount: Int; var warnings: [String] = [] }
-struct PrinterInfo: Identifiable, Hashable { var id: String; var displayName: String }
+struct PrinterInfo: Identifiable, Hashable { var id: String; var displayName: String; var isDefault = false }
+enum DefaultTargetResolver {
+ static func resolve(printers: [PrinterInfo], current: OutputTarget = .pdf, configured: Bool) -> OutputTarget {
+  guard !configured, let printer = printers.first(where: \.isDefault) else { return current }
+  return .printer(printer.id)
+}
+}
 struct PrinterCapabilities {
  var papers: [String] = []; var supportsDuplex = false; var supportsColor = false
  var options: [String: [String]] = [:]

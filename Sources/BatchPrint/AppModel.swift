@@ -90,6 +90,12 @@ import PDFKit
    do {
     let list = try await Task.detached { [backend] in try backend.printers() }.value
     printers = list
+    let currentTarget = snapshot.preferences.defaultSettings.target
+    let resolvedTarget = DefaultTargetResolver.resolve(printers:list,current:currentTarget,configured:snapshot.preferences.defaultTargetConfigured)
+    if !snapshot.preferences.defaultTargetConfigured, resolvedTarget != currentTarget, case .printer = resolvedTarget {
+     snapshot.preferences.defaultSettings.target = resolvedTarget
+     _ = persist()
+    }
     for p in list { let cap = try? await Task.detached { [backend] in try backend.capabilities(printer: p.id) }.value; capabilities[p.id] = cap }
    } catch { message = "读取打印机失败：\(error.localizedDescription)；仍可打印到 PDF" }
   }
