@@ -27,6 +27,68 @@ import CSQLite
   var checks:[String] = []; let start = Date()
   func check(_ condition:Bool,_ name:String) throws { guard condition else { throw PrintFailure("FAIL: "+name) }; checks.append(name); print("PASS: "+name); fflush(stdout) }
   let source = directory.appendingPathComponent("原始中文.pdf"); try fixturePDF(source)
+  let navigationModel = AppModel(root:directory.appendingPathComponent("task-navigation"),printerBackend:LostResponsePrinter())
+  navigationModel.newBatch()
+  try check(navigationModel.section == "新建任务", "新建任务进入任务编辑页")
+  var failedDocument = DocumentItem(name:"失败文件.pdf",sourcePath:source.path,sourceHash:"fixture")
+  failedDocument.state = .failed; failedDocument.error = "转换失败的原始原因"; failedDocument.pdfPath = source.path
+  var completedDocument = failedDocument; completedDocument.id = UUID(); completedDocument.name = "成功文件.pdf"; completedDocument.state = .completed; completedDocument.error = nil
+  var reviewDocument = failedDocument; reviewDocument.id = UUID(); reviewDocument.name = "需核实文件.pdf"; reviewDocument.state = .needsReview
+  var olderTask = Batch(name:"旧任务"); olderTask.documents = [failedDocument,completedDocument,reviewDocument]; olderTask.settings.target = .printer("old-task-printer")
+  let emptyTask = Batch(name:"新空任务")
+  navigationModel.snapshot.batches = [emptyTask,olderTask]; navigationModel.selectedBatch = emptyTask.id; navigationModel.section = "历史任务"
+  try check(Set(navigationModel.visibleDocuments.map(\.id)) == Set(olderTask.documents.map(\.id)), "历史任务跨任务显示成功、失败及需核实记录")
+  try check(navigationModel.settings(for:completedDocument).target == .printer("old-task-printer"), "历史文件使用所属任务的输出设置")
+  navigationModel.selectDocuments([completedDocument.id])
+  try check(navigationModel.selectedBatch == olderTask.id && navigationModel.selectedItem?.id == completedDocument.id, "跨任务选择历史文件后同步详情和所属任务")
+  navigationModel.search = "失败文件"
+  try check(navigationModel.visibleDocuments.map(\.id) == [failedDocument.id], "历史搜索跨任务查找失败文件")
+  navigationModel.search = ""
+  navigationModel.selectedBatch = olderTask.id; navigationModel.selection = [failedDocument.id]
+  navigationModel.retrySelected()
+  let taskAfterRetry = navigationModel.currentBatch!
+  try check(taskAfterRetry.documents.first(where: { $0.id == failedDocument.id })?.error == "转换失败的原始原因" && taskAfterRetry.documents.first(where: { $0.id == failedDocument.id })?.state == .failed, "重试保留原失败记录与原因")
+  try check(taskAfterRetry.documents.count == 4 && taskAfterRetry.documents.last?.state == .ready && navigationModel.section == "新建任务", "重试创建可编辑的新文件并离开历史筛选")
+  _ = navigationModel.persist()
+  let restoredNavigation = try navigationModel.store!.load()
+  try check(restoredNavigation.batches[1].documents.first?.error == "转换失败的原始原因", "失败历史重启后仍可读取")
+  let executionModel = AppModel(root:directory.appendingPathComponent("task-execution"),printerBackend:LostResponsePrinter())
+  executionModel.newBatch()
+  var invalidSettings = OutputSettings(); invalidSettings.pageRange = "99"
+  executionModel.changeSettings(invalidSettings,individual:false)
+  var executionDocument = DocumentItem(name:"真实输出验证.pdf",sourcePath:source.path,sourceHash:"execution-fixture")
+  executionDocument.pdfPath = source.path; executionDocument.pageCount = 3; executionDocument.state = .ready
+  let executionBatchID = executionModel.selectedBatch!
+  executionModel.snapshot.batches[0].documents = [executionDocument]
+  let executionExport = directory.appendingPathComponent("task-exports")
+  try FileManager.default.createDirectory(at:executionExport,withIntermediateDirectories:true)
+  executionModel.run(batchID:executionBatchID,ids:[executionDocument.id],exportDirectory:executionExport)
+  while executionModel.running { try await Task.sleep(nanoseconds:20_000_000) }
+  let failedExecution = executionModel.item(executionBatchID,executionDocument.id)!
+  try check(failedExecution.state == .failed && failedExecution.attempts.last?.state == .failed && failedExecution.attempts.last?.events.last?.message == failedExecution.error, "实际排版失败保存执行时间、失败状态和原因")
+  executionModel.selection = [executionDocument.id]; executionModel.retrySelected()
+  let retryID = executionModel.selection.first!
+  executionModel.changeSettings(OutputSettings(),individual:true)
+  executionModel.run(batchID:executionBatchID,ids:[retryID],exportDirectory:executionExport)
+  while executionModel.running { try await Task.sleep(nanoseconds:20_000_000) }
+  executionModel.showSection("历史任务")
+  let savedExecution = executionModel.item(executionBatchID,retryID)!
+  try check(savedExecution.state == .completed && savedExecution.attempts.last?.outputPath.map { FileManager.default.fileExists(atPath:$0) } == true && executionModel.visibleDocuments.count == 2, "实际重试导出 PDF 后历史同时保留失败和成功记录")
+  let reloadedExecution = AppModel(root:executionModel.store!.root,printerBackend:LostResponsePrinter())
+  reloadedExecution.showSection("历史任务")
+  try check(reloadedExecution.visibleDocuments.map(\.state) == [.failed,.completed], "应用重启后恢复完整任务成功失败历史")
+  let conversionModel = AppModel(root:directory.appendingPathComponent("task-conversion"),printerBackend:LostResponsePrinter())
+  conversionModel.newBatch()
+  let unsupportedSource = directory.appendingPathComponent("不支持的文件.unknown-format")
+  try Data("unsupported fixture".utf8).write(to:unsupportedSource)
+  let unsupportedDocument = DocumentItem(name:unsupportedSource.lastPathComponent,sourcePath:unsupportedSource.path,sourceHash:"unsupported-fixture")
+  conversionModel.snapshot.batches[0].documents = [unsupportedDocument]
+  conversionModel.startPreparing()
+  while conversionModel.preparing { try await Task.sleep(nanoseconds:20_000_000) }
+  let failedConversion = conversionModel.currentBatch!.documents[0]
+  try check(failedConversion.state == .failed && failedConversion.attempts.last?.state == .failed && failedConversion.attempts.last?.events.last?.message.contains("文件转换失败") == true, "实际文件转换失败写入可持久化的执行记录")
+  conversionModel.showSection("历史任务")
+  try check(conversionModel.visibleDocuments.count == 1, "转换失败也进入历史任务")
   try check(try PageSelection.parse("3,1-2,3",count:3) == [2,0,1],"页码顺序与去重")
   var invalidRejected = false; do { _ = try PageSelection.parse("0-3",count:3) } catch { invalidRejected = true }; try check(invalidRejected,"拒绝页码 0")
   var settings = OutputSettings(); settings.copies = 7

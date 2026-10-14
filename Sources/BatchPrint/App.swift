@@ -13,7 +13,7 @@ struct BatchPrintApp:App {
  var body:some Scene {
   WindowGroup("批量打印") { ContentView().environmentObject(model).frame(minWidth:1050,minHeight:720).onAppear { delegate.model = model } }.defaultSize(width:1280,height:860)
    .commands {
-    CommandGroup(replacing:.newItem) { Button("新建批次") { model.newBatch() }.keyboardShortcut("n"); Button("添加文件…") { model.chooseFiles() }.keyboardShortcut("o"); Button("添加网页…") { model.webVisible = true }.keyboardShortcut("l") }
+    CommandGroup(replacing:.newItem) { Button("新建任务") { model.newBatch() }.keyboardShortcut("n"); Button("添加文件…") { model.chooseFiles() }.keyboardShortcut("o"); Button("添加网页…") { model.webVisible = true }.keyboardShortcut("l") }
     CommandGroup(replacing:.appSettings) { Button("设置…") { model.settingsVisible = true }.keyboardShortcut(",") }
    }
  }

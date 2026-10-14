@@ -6,7 +6,7 @@ import PDFKit
  @Published var snapshot = AppSnapshot()
  @Published var selectedBatch: UUID?
  @Published var selection = Set<UUID>()
- @Published var section = "批次"
+ @Published var section = "新建任务"
  @Published var search = ""
  @Published var printers: [PrinterInfo] = []
  @Published var capabilities: [String: PrinterCapabilities] = [:]
@@ -52,13 +52,36 @@ import PDFKit
  var currentBatch: Batch? { snapshot.batches.first { $0.id == selectedBatch } }
  var selectedItem: DocumentItem? { currentBatch?.documents.first { selection.contains($0.id) } }
  var visibleDocuments: [DocumentItem] {
-  let documents = currentBatch?.documents ?? []
-  return documents.filter { item in
+  visibleBatches.flatMap { visibleDocuments(in:$0) }
+ }
+ var visibleBatches: [Batch] {
+  let batches = section == "新建任务" ? snapshot.batches.filter { $0.id == selectedBatch } : snapshot.batches
+  return batches.filter { !visibleDocuments(in:$0).isEmpty }
+ }
+ func visibleDocuments(in batch: Batch) -> [DocumentItem] {
+  batch.documents.filter { item in
    let match = search.isEmpty || item.name.localizedCaseInsensitiveContains(search)
-   switch section { case "失败": return match && [.failed,.needsReview].contains(item.state); case "进行中": return match && !item.state.terminal; case "历史": return match && (item.state.terminal || !item.attempts.isEmpty); default: return match }
+   switch section { case "进行中": return match && !item.state.terminal; case "历史任务": return match && (item.state.terminal || item.state == .needsReview || !item.attempts.isEmpty); default: return match }
   }
  }
- func settings(for item: DocumentItem, batch: Batch? = nil) -> OutputSettings { item.settingsOverride ?? batch?.settings ?? currentBatch?.settings ?? snapshot.preferences.defaultSettings }
+ func settings(for item: DocumentItem, batch: Batch? = nil) -> OutputSettings { item.settingsOverride ?? batch?.settings ?? snapshot.batches.first(where: { $0.documents.contains(where: { $0.id == item.id }) })?.settings ?? currentBatch?.settings ?? snapshot.preferences.defaultSettings }
+ func selectDocuments(_ ids: Set<UUID>) {
+  let added = ids.subtracting(selection)
+  let candidates = added.isEmpty ? ids : added
+  if let batch = snapshot.batches.first(where: { batch in batch.documents.contains(where: { candidates.contains($0.id) }) }) {
+   selectedBatch = batch.id
+   selection = ids.intersection(Set(batch.documents.map(\.id)))
+  } else { selection = [] }
+  refreshPreview()
+ }
+ func batch(containing ids: Set<UUID>) -> Batch? {
+  guard !ids.isEmpty else { return nil }
+  return snapshot.batches.first { ids.isSubset(of:Set($0.documents.map(\.id))) }
+ }
+ func showSection(_ name: String) {
+  if name == "新建任务" { newBatch(); return }
+  section = name; selection = []; refreshPreview()
+ }
  var outputSummary: String {
   let docs = currentBatch?.documents ?? []; var pages = 0; var sheets = 0
   for doc in docs where doc.pageCount > 0 { let s = settings(for:doc); let n = (try? PageSelection.parse(s.pageRange,count:doc.pageCount).count) ?? 0; pages += n*s.effectiveCopies; if !s.target.isPDF { sheets += (s.duplex == .single ? n : (n+1)/2)*s.copies } }
@@ -76,9 +99,9 @@ import PDFKit
   catch { paused = true; message = error.localizedDescription; return false }
  }
  func newBatch(template: PrintTemplate? = nil) {
-  let name = "批次 " + Date().formatted(date: .numeric, time: .shortened)
+  let name = "任务 " + Date().formatted(date: .numeric, time: .shortened)
   let batch = Batch(name: name, settings: template?.settings ?? snapshot.preferences.defaultSettings)
-  snapshot.batches.insert(batch, at: 0); selectedBatch = batch.id; selection = []; section = "批次"; persist()
+  snapshot.batches.insert(batch, at: 0); selectedBatch = batch.id; selection = []; search = ""; section = "新建任务"; persist(); refreshPreview()
  }
  func update(_ bid: UUID, _ iid: UUID, _ body: (inout DocumentItem) -> Void) {
   guard let b = snapshot.batches.firstIndex(where: {$0.id == bid}), let i = snapshot.batches[b].documents.firstIndex(where: {$0.id == iid}) else { return }
@@ -159,7 +182,9 @@ import PDFKit
      if selection.contains(doc.id) { refreshPreview() }
     } catch {
      if cancelled.contains(doc.id) { continue }
-     update(batch.id,doc.id) { $0.state = .failed; $0.error = error.localizedDescription }; persist()
+     var attempt = OutputAttempt(settings:settings(for:doc,batch:batch)); attempt.state = .failed
+     attempt.events = [StateEvent(message:"文件转换失败：\(error.localizedDescription)")]
+     update(batch.id,doc.id) { $0.state = .failed; $0.error = error.localizedDescription; $0.attempts.append(attempt) }; persist()
     }
    }
   }
@@ -203,7 +228,7 @@ import PDFKit
   }
  }
  func move(from: IndexSet, to: Int) {
-  guard !running, section == "批次", search.isEmpty, let b = snapshot.batches.firstIndex(where: {$0.id == selectedBatch}) else { return }
+  guard !running, section == "新建任务", search.isEmpty, let b = snapshot.batches.firstIndex(where: {$0.id == selectedBatch}) else { return }
   snapshot.batches[b].documents.move(fromOffsets:from,toOffset:to); persist()
  }
  var canDeleteSelected: Bool {
@@ -278,7 +303,7 @@ import PDFKit
    candidate.batches.insert(batch,at:min(index,candidate.batches.count)); restoredBatch = batch.id; restoredIDs = []
   }
   guard saveDeletion(candidate) else { return }
-  selectedBatch = restoredBatch; selection = restoredIDs; section = "批次"
+  selectedBatch = restoredBatch; selection = restoredIDs; section = "新建任务"
   lastDeletion = nil; deletionNotice = nil; refreshPreview()
  }
  private var undoProtectedFolders: Set<String> {
@@ -341,7 +366,7 @@ import PDFKit
       let jobID: Int
       do { jobID = try await Task.detached { [backend] in try backend.submit(pdf:out,settings:setting,attemptID:aid) }.value }
       catch {
-       update(batchID,id) { $0.state = .needsReview; $0.error = "提交结果不明：\(error.localizedDescription)。核实打印机后再决定是否重打。"; $0.attempts[$0.attempts.count-1].state = .needsReview }
+       update(batchID,id) { $0.state = .needsReview; $0.error = "提交结果不明：\(error.localizedDescription)。核实打印机后再决定是否重打。"; $0.attempts[$0.attempts.count-1].state = .needsReview; $0.attempts[$0.attempts.count-1].events.append(StateEvent(message:$0.error!)) }
        persist(); paused = true; continue
       }
       update(batchID,id) { $0.state = .queued; $0.attempts[$0.attempts.count-1].systemJobID = jobID; $0.attempts[$0.attempts.count-1].state = .queued }
@@ -350,10 +375,20 @@ import PDFKit
       if item(batchID,id)?.state == .needsReview { paused = true }
      }
     } catch is CancellationError {
-     update(batchID,id) { $0.state = .cancelled; if !$0.attempts.isEmpty { $0.attempts[$0.attempts.count-1].state = .cancelled; $0.attempts[$0.attempts.count-1].events.append(StateEvent(message:"已取消保存，未安装最终输出文件")) } }; persist()
+     update(batchID,id) {
+      $0.state = .cancelled
+      if $0.attempts.count == doc.attempts.count { $0.attempts.append(OutputAttempt(settings:setting)) }
+      $0.attempts[$0.attempts.count-1].state = .cancelled
+      $0.attempts[$0.attempts.count-1].events.append(StateEvent(message:"已取消保存，未安装最终输出文件"))
+     }; persist()
     } catch {
      if cancelled.contains(id) { continue }
-     update(batchID,id) { $0.state = .failed; $0.error = error.localizedDescription; if !$0.attempts.isEmpty { $0.attempts[$0.attempts.count-1].state = .failed; $0.attempts[$0.attempts.count-1].events.append(StateEvent(message:error.localizedDescription)) } }
+     update(batchID,id) {
+      $0.state = .failed; $0.error = error.localizedDescription
+      if $0.attempts.count == doc.attempts.count { $0.attempts.append(OutputAttempt(settings:setting)) }
+      $0.attempts[$0.attempts.count-1].state = .failed
+      $0.attempts[$0.attempts.count-1].events.append(StateEvent(message:error.localizedDescription))
+     }
      guard persist() else { break }
     }
    }
@@ -374,7 +409,7 @@ import PDFKit
     case .failed(let error): next = .failed; doc.error = error; done = true
     case .unknown: next = .needsReview; doc.error = "无法核实系统任务状态，请检查打印机后决定是否重打"; done = true
     }
-    if doc.state != next { doc.state = next; if !doc.attempts.isEmpty { doc.attempts[doc.attempts.count-1].state = next; doc.attempts[doc.attempts.count-1].events.append(StateEvent(message: next == .completed ? "系统报告完成（未逐张核实出纸）" : next.rawValue)) } }
+    if doc.state != next { doc.state = next; if !doc.attempts.isEmpty { doc.attempts[doc.attempts.count-1].state = next; doc.attempts[doc.attempts.count-1].events.append(StateEvent(message: next == .completed ? "系统报告完成（未逐张核实出纸）" : doc.error ?? next.rawValue)) } }
    }
    guard persist() else { break }
    if done { break }
@@ -395,7 +430,8 @@ import PDFKit
    if let attempt = doc.attempts.last, let jid = attempt.systemJobID, case .printer(let p) = attempt.settings.target {
     Task { do { try await Task.detached { [backend] in try backend.cancel(printer:p,jobID:jid) }.value } catch { message = error.localizedDescription } }
    } else if doc.state != .needsReview {
-    update(bid,id) { $0.state = .cancelled }; persist()
+    var attempt = OutputAttempt(settings:settings(for:doc)); attempt.state = .cancelled; attempt.events = [StateEvent(message:"已取消任务")]
+    update(bid,id) { $0.state = .cancelled; $0.attempts.append(attempt) }; persist()
    }
   }
  }
@@ -405,12 +441,12 @@ import PDFKit
   for doc in docs {
    if activeConversionID == doc.id { message = "正在停止转换，请稍后重试。"; continue }
    guard FileManager.default.fileExists(atPath:doc.sourcePath), doc.pdfPath == nil || FileManager.default.fileExists(atPath:doc.pdfPath!) else { message = "内部缓存已过期，请重新导入原文件。已导出的 PDF 不受影响。"; continue }
-   if !doc.attempts.isEmpty {
+   if doc.attempts.contains(where: { $0.outputPath != nil || $0.systemJobID != nil || [.completed,.needsReview,.submitting,.queued,.processing].contains($0.state) }) {
     let alert = NSAlert(); alert.messageText = "再次输出“\(doc.name)”"; alert.informativeText = "原任务可能已经输出。新任务保留原页码范围，你可以在开始前修改页码，避免重复打印。"; alert.addButton(withTitle:"创建重打任务"); alert.addButton(withTitle:"取消")
     if alert.runModal() != .alertFirstButtonReturn { continue }
-    var copy = doc; copy.id = UUID(); copy.created = Date(); copy.attempts = []; copy.state = copy.pdfPath == nil ? .preparing : .ready; copy.error = nil
-    snapshot.batches[b].documents.append(copy); selection = [copy.id]
-   } else { update(bid,doc.id) { $0.state = .preparing; $0.error = nil }; cancelled.remove(doc.id) }
+   }
+   var copy = doc; copy.id = UUID(); copy.created = Date(); copy.attempts = []; copy.state = copy.pdfPath == nil ? .preparing : .ready; copy.error = nil
+   snapshot.batches[b].documents.append(copy); selection = [copy.id]; section = "新建任务"
   }
   persist(); startPreparing(); refreshPreview()
  }
